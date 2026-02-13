@@ -19,6 +19,7 @@ function Home() {
   const [isUnlocked, setIsUnlocked] = useState(false)
 
   const dialButtonRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const audioContextRef = useRef<AudioContext | null>(null)
 
   const isCombinationMatched = useMemo(
     () => dialValues.every((value, index) => value === COMBINATION[index]),
@@ -92,6 +93,77 @@ function Home() {
     return () => clearTimeout(timeout)
   }, [dialValues])
 
+  const playUnlockSound = () => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const AudioContextConstructor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AudioContextConstructor) {
+      return
+    }
+
+    const context = audioContextRef.current ?? new AudioContextConstructor()
+    audioContextRef.current = context
+
+    if (context.state === 'suspended') {
+      void context.resume()
+    }
+
+    const now = context.currentTime
+
+    const noiseBuffer = context.createBuffer(1, Math.floor(context.sampleRate * 0.72), context.sampleRate)
+    const data = noiseBuffer.getChannelData(0)
+    for (let i = 0; i < data.length; i += 1) {
+      data[i] = (Math.random() * 2 - 1) * 0.22
+    }
+
+    const noiseSource = context.createBufferSource()
+    noiseSource.buffer = noiseBuffer
+
+    const sweepFilter = context.createBiquadFilter()
+    sweepFilter.type = 'bandpass'
+    sweepFilter.frequency.setValueAtTime(240, now)
+    sweepFilter.frequency.exponentialRampToValueAtTime(1450, now + 0.66)
+    sweepFilter.Q.setValueAtTime(1.8, now)
+
+    const sweepGain = context.createGain()
+    sweepGain.gain.setValueAtTime(0.0001, now)
+    sweepGain.gain.exponentialRampToValueAtTime(0.022, now + 0.12)
+    sweepGain.gain.exponentialRampToValueAtTime(0.002, now + 0.62)
+    sweepGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.72)
+
+    noiseSource.connect(sweepFilter)
+    sweepFilter.connect(sweepGain)
+    sweepGain.connect(context.destination)
+    noiseSource.start(now)
+    noiseSource.stop(now + 0.72)
+
+    const clunk = context.createOscillator()
+    clunk.type = 'triangle'
+    clunk.frequency.setValueAtTime(120, now + 0.6)
+    clunk.frequency.exponentialRampToValueAtTime(78, now + 0.75)
+
+    const clunkGain = context.createGain()
+    clunkGain.gain.setValueAtTime(0.0001, now + 0.59)
+    clunkGain.gain.exponentialRampToValueAtTime(0.05, now + 0.62)
+    clunkGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.82)
+
+    clunk.connect(clunkGain)
+    clunkGain.connect(context.destination)
+    clunk.start(now + 0.59)
+    clunk.stop(now + 0.84)
+  }
+
+  const unlockLock = () => {
+    if (isUnlocked) {
+      return
+    }
+
+    playUnlockSound()
+    setIsUnlocked(true)
+  }
+
   const onDialKeyDown = (
     dialIndex: number,
     event: ReactKeyboardEvent<HTMLButtonElement>,
@@ -145,7 +217,7 @@ function Home() {
 
     if (event.key === 'Enter' && isCombinationMatched) {
       event.preventDefault()
-      setIsUnlocked(true)
+      unlockLock()
     }
   }
 
@@ -217,13 +289,13 @@ function Home() {
 
                 <p className="dial-helper">Type digits or use arrow keys.</p>
               </div>
-              <button
-                type="button"
-                className={`lock-open-button lock-open-button--door ${isCombinationMatched ? 'lock-open-button--ready' : ''}`.trim()}
-                onClick={() => setIsUnlocked(true)}
-                disabled={!isCombinationMatched || isUnlocked}
-                aria-label="Open lock"
-              >
+                <button
+                  type="button"
+                  className={`lock-open-button lock-open-button--door ${isCombinationMatched ? 'lock-open-button--ready' : ''}`.trim()}
+                  onClick={unlockLock}
+                  disabled={!isCombinationMatched || isUnlocked}
+                  aria-label="Open lock"
+                >
                 OPEN
               </button>
             </div>
